@@ -21,7 +21,7 @@ VIEWS_UR5 = [
     "camera_global",
 ]
 
-TASK_UR5 = "Pick up the cube"
+TASK_UR5 = "Pick up the red cube and place it on the green area"
 
 FPS_UR5 = 20  # Frames per second for UR5 robot data
 
@@ -91,13 +91,13 @@ def create_empty_lerobot_dataset(
                 "names": JOINT_LIST_UR5,
             },
         }
-    
+     
     for view in VIEWS_UR5:
         features[f"observation.images.{view}_view"] = {
             "dtype": "video",
             "shape": [512, 512, 3],
             "names": ["height", "width", "channel"],
-            "info": {"video.fps": FPS_UR5, "video.codec": "mp4v"}
+            "video_info": {"video.fps": FPS_UR5, "video.codec": "h264"}
         }
 
     return LeRobotDataset.create(
@@ -134,6 +134,12 @@ def write_modality_ur5(dataset_root: str):
             },
         },
         "video": {},
+        "annotation": {
+            "human.task_description": {
+                "original_key": "task_index"
+            },
+            "human.validity": {}
+        }
     }
 
     for view in VIEWS_UR5:
@@ -144,7 +150,8 @@ def write_modality_ur5(dataset_root: str):
     with open(f"{dataset_root}/lerobot/meta/modality.json", "w") as f:
         json.dump(modality, f, indent=2)
 
-dataset_root = "/home/luebbet/dev/datasets/2025-07-28_1741/"
+
+dataset_root = "/home/luebbet/dev/datasets/pick_and_place/2025-07-30_0440/"
 
 hdf5_file = f"{dataset_root}/all_obs.hdf5"
 data_dict = hdf5_to_dict(hdf5_file)["data"]
@@ -152,10 +159,11 @@ print(data_dict)
 
 my_dataset = create_empty_lerobot_dataset(
     dataset_path=f"{dataset_root}/lerobot",
-    dataset_name="luebbet/ur5_sim__pick_up_20"
+    dataset_name="luebbet/ur5_sim_pick_and_place_v3_h264",
 )
 
 for episode in data_dict.items():
+    task = TASK_UR5
     if episode[0] == "_attrs":
         continue
     obs_pre = episode[1]["obs_pre"]
@@ -170,7 +178,7 @@ for episode in data_dict.items():
             )
         my_dataset.add_frame(
             frame=frame,
-            task=TASK_UR5,
+            task=task,
         )
 
     my_dataset.save_episode()
