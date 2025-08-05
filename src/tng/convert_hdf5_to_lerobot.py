@@ -151,7 +151,7 @@ def write_modality_ur5(dataset_root: str):
         json.dump(modality, f, indent=2)
 
 
-dataset_root = "/home/luebbet/dev/datasets/pick_and_place/2025-07-30_0440/"
+dataset_root = "/home/innovation-hacking/luebbet/dev/datasets/pick_and_place/record/2025-08-05_1635"
 
 hdf5_file = f"{dataset_root}/all_obs.hdf5"
 data_dict = hdf5_to_dict(hdf5_file)["data"]
@@ -159,7 +159,7 @@ print(data_dict)
 
 my_dataset = create_empty_lerobot_dataset(
     dataset_path=f"{dataset_root}/lerobot",
-    dataset_name="luebbet/ur5_sim_pick_and_place_v3_h264",
+    dataset_name="luebbet/ur5_sim_pick_and_place_v4_h264_eval",
 )
 
 for episode in data_dict.items():
