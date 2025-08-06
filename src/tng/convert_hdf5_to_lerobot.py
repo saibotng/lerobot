@@ -151,37 +151,40 @@ def write_modality_ur5(dataset_root: str):
         json.dump(modality, f, indent=2)
 
 
-dataset_root = "/home/innovation-hacking/luebbet/dev/datasets/pick_and_place/record/2025-08-05_1635"
+dataset_root = "/home/innovation-hacking/luebbet/dev/datasets/pick_and_place/inference/2025-08-06_2056"
 
-hdf5_file = f"{dataset_root}/all_obs.hdf5"
-data_dict = hdf5_to_dict(hdf5_file)["data"]
-print(data_dict)
 
+hdf5_files = [f"{dataset_root}/all_obs.hdf5", f"{dataset_root}/all_obs_failed.hdf5"]
 my_dataset = create_empty_lerobot_dataset(
     dataset_path=f"{dataset_root}/lerobot",
-    dataset_name="luebbet/ur5_sim_pick_and_place_v4_h264_eval",
+    dataset_name="luebbet/ur5_sim_pick_and_place_eval_whole_action_head",
 )
+for hdf5_file in hdf5_files:
+    data_dict = hdf5_to_dict(hdf5_file)["data"]
+    print(data_dict)
 
-for episode in data_dict.items():
-    task = TASK_UR5
-    if episode[0] == "_attrs":
-        continue
-    obs_pre = episode[1]["obs_pre"]
-    obs_post = episode[1]["obs_post"]
-    for i in range(1, len(obs_pre[VIEWS_UR5[0]])):
-        frame = {}
-        frame["observation.state"] = obs_pre["joints_pos_state"][i]
-        frame["action"] = obs_post["joints_pos_action"][i]
-        for view in VIEWS_UR5:
-            frame[f"observation.images.{view}_view"] = np.array(
-                obs_pre[view][i], dtype=np.uint8
+
+
+    for episode in data_dict.items():
+        task = TASK_UR5
+        if episode[0] == "_attrs":
+            continue
+        obs_pre = episode[1]["obs_pre"]
+        obs_post = episode[1]["obs_post"]
+        for i in range(1, len(obs_pre[VIEWS_UR5[0]])):
+            frame = {}
+            frame["observation.state"] = obs_pre["joints_pos_state"][i]
+            frame["action"] = obs_post["joints_pos_action"][i]
+            for view in VIEWS_UR5:
+                frame[f"observation.images.{view}_view"] = np.array(
+                    obs_pre[view][i], dtype=np.uint8
+                )
+            my_dataset.add_frame(
+                frame=frame,
+                task=task,
             )
-        my_dataset.add_frame(
-            frame=frame,
-            task=task,
-        )
 
-    my_dataset.save_episode()
+        my_dataset.save_episode()
 
 write_modality_ur5(dataset_root=dataset_root)
 
