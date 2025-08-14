@@ -15,13 +15,15 @@ JOINT_LIST_UR5 = [
     "wrist_3_joint",
     "hand_to_left_finger"
 ]
+DELTA_JOINT_LIST_UR5 = [f"delta_{joint}" for joint in JOINT_LIST_UR5]
 
 VIEWS_UR5 = [
     "camera_wrist",
-    "camera_global",
+    "camera_global_front",
+    "camera_global_side",
 ]
 
-TASK_UR5 = "Pick up the red cube and place it on the green area"
+TASK_UR5 = "Pick up the blue cube and place it on the black platform"
 
 FPS_UR5 = 20  # Frames per second for UR5 robot data
 
@@ -82,13 +84,13 @@ def create_empty_lerobot_dataset(
     features = {
             "observation.state": {
                 "dtype": "float32",
-                "shape": (7,),
-                "names": JOINT_LIST_UR5,
+                "shape": (14,),
+                "names": JOINT_LIST_UR5 + DELTA_JOINT_LIST_UR5,
             },
             "action": {
                 "dtype": "float32",
-                "shape": (7,),
-                "names": JOINT_LIST_UR5,
+                "shape": (14,),
+                "names": JOINT_LIST_UR5 + DELTA_JOINT_LIST_UR5,
             },
         }
      
@@ -122,7 +124,16 @@ def write_modality_ur5(dataset_root: str):
                 "start": 6,
                 "end": 7,
             },
+            "delta_robot_arm": {
+                "start": 7,
+                "end": 13,
+            },
+            "delta_gripper": {
+                "start": 13,
+                "end": 14,
+            }
         },
+
         "action": {
             "robot_arm": {
                 "start": 0,
@@ -132,7 +143,16 @@ def write_modality_ur5(dataset_root: str):
                 "start": 6,
                 "end": 7,
             },
+            "delta_robot_arm": {
+                "start": 7,
+                "end": 13,
+            },
+            "delta_gripper": {
+                "start": 13,
+                "end": 14,
+            },
         },
+
         "video": {},
         "annotation": {
             "human.task_description": {
@@ -151,40 +171,54 @@ def write_modality_ur5(dataset_root: str):
         json.dump(modality, f, indent=2)
 
 
-dataset_root = "/home/innovation-hacking/luebbet/dev/datasets/pick_and_place/inference/2025-08-06_2056"
+def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset,
+                         task: str,
+                         start_index: int = 1):
+
+    print(f'Processing hdf5 file: {h5_path}')
+    with h5py.File(h5_path, 'r') as f:
+        demo_names = list(f['data'].keys())
+        print(f'Found {len(demo_names)} demos: {demo_names}')
+
+        for demo_name in demo_names:
+            demo_group = f['data'][demo_name]
+            try:
+                joint_states = np.array(demo_group['obs_pre']['joints_pos_state'])
+                absolute_actions = np.array(demo_group['obs_post']['joints_pos_action'])
+                images = {view: np.array(demo_group['obs_pre'][view], dtype=np.uint8) for view in VIEWS_UR5}
+            except KeyError:
+                print(f'Demo {demo_name} is not valid, skip it')
+                return False
+            
+            assert absolute_actions.shape[0] == joint_states.shape[0] == images[list(images.keys())[0]].shape[0], \
+                f"Shape mismatch in demo '{demo_name}': " \
+                f"actions {absolute_actions.shape[0]}, states {joint_states.shape[0]}, images {images[list(images.keys())[0]].shape[0]}"
+            
+            relative_actions = absolute_actions - joint_states
+            all_actions = np.concatenate((absolute_actions, relative_actions), axis=1)
+            previous_joint_delta = np.roll(relative_actions, shift=1, axis=0)
+            all_states = np.concatenate((joint_states, previous_joint_delta), axis=1)
+            total_state_frames = joint_states.shape[0]
+            for i in range(start_index, total_state_frames):
+                frame = {}
+                for view in VIEWS_UR5:
+                    frame[f"observation.images.{view}_view"] = images[view][i]
+                frame["observation.state"] = all_states[i]
+                frame["action"] = all_actions[i]
+                my_dataset.add_frame(frame=frame, task=task)
+
+            my_dataset.save_episode()
+
+dataset_root = "/home/innovation-hacking/luebbet/dev/datasets/pick_and_place/inference/2025-08-14_1255/"
 
 
-hdf5_files = [f"{dataset_root}/all_obs.hdf5", f"{dataset_root}/all_obs_failed.hdf5"]
+hdf5_files = [f"{dataset_root}/all_obs.hdf5"]#, f"{dataset_root}/all_obs_failed.hdf5"]
 my_dataset = create_empty_lerobot_dataset(
     dataset_path=f"{dataset_root}/lerobot",
-    dataset_name="luebbet/ur5_sim_pick_and_place_eval_whole_action_head",
+    dataset_name="luebbet/success_delta",
 )
 for hdf5_file in hdf5_files:
-    data_dict = hdf5_to_dict(hdf5_file)["data"]
-    print(data_dict)
-
-
-
-    for episode in data_dict.items():
-        task = TASK_UR5
-        if episode[0] == "_attrs":
-            continue
-        obs_pre = episode[1]["obs_pre"]
-        obs_post = episode[1]["obs_post"]
-        for i in range(1, len(obs_pre[VIEWS_UR5[0]])):
-            frame = {}
-            frame["observation.state"] = obs_pre["joints_pos_state"][i]
-            frame["action"] = obs_post["joints_pos_action"][i]
-            for view in VIEWS_UR5:
-                frame[f"observation.images.{view}_view"] = np.array(
-                    obs_pre[view][i], dtype=np.uint8
-                )
-            my_dataset.add_frame(
-                frame=frame,
-                task=task,
-            )
-
-        my_dataset.save_episode()
+    stream_to_lerobot(hdf5_file, my_dataset, task=TASK_UR5)  
 
 write_modality_ur5(dataset_root=dataset_root)
 
