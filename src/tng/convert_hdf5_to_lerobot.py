@@ -5,6 +5,9 @@ import numpy as np
 from pathlib import Path
 from typing import Union, Any, Dict
 import json
+import argparse
+import sys
+import os
 
 JOINT_LIST_UR5 = [
     "shoulder_pan_joint",
@@ -266,20 +269,103 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset,
 
             my_dataset.save_episode()
 
-dataset_root = "/home/innovation-hacking/luebbet/dev/datasets/pick_and_place/inference/2025-08-21_1644/"
+
+def main():
+    parser = argparse.ArgumentParser(description="Convert HDF5 files to LeRobot dataset format")
+    parser.add_argument(
+        "--dataset-root",
+        type=str,
+        help="Root directory containing the HDF5 files to convert"
+    )
+    parser.add_argument(
+        "--dataset-name",
+        type=str,
+        default=None,
+        help="Name for the LeRobot dataset (default: auto-generated from path)"
+    )
+    parser.add_argument(
+        "--hdf5-files",
+        nargs="+",
+        default=["all_obs.hdf5", "all_obs_failed.hdf5"],
+        help="List of HDF5 files to process (default: all_obs.hdf5 all_obs_failed.hdf5)"
+    )
+    parser.add_argument(
+        "--push-to-hub",
+        action="store_true",
+        help="Push the dataset to Hugging Face Hub after conversion"
+    )
+    parser.add_argument(
+        "--commit-message",
+        type=str,
+        default="Initial upload via script",
+        help="Commit message for hub upload (default: 'Initial upload via script')"
+    )
+    parser.add_argument(
+        "--compute-stats",
+        action="store_true",
+        help="Compute dataset statistics when pushing to hub"
+    )
+    
+    args = parser.parse_args()
+    
+    dataset_root = args.dataset_root
+    
+    # Validate dataset root exists
+    if not os.path.exists(dataset_root):
+        print(f"Error: Dataset root '{dataset_root}' does not exist")
+        sys.exit(1)
+    
+    # Generate dataset name if not provided
+    if args.dataset_name is None:
+        dataset_name = f"luebbet/{os.path.basename(dataset_root.rstrip('/'))}"
+    else:
+        dataset_name = args.dataset_name
+    
+    print(f"Dataset root: {dataset_root}")
+    print(f"Dataset name: {dataset_name}")
+    
+    # Build full paths to HDF5 files and check they exist
+    hdf5_files = []
+    for filename in args.hdf5_files:
+        full_path = os.path.join(dataset_root, filename)
+        if os.path.exists(full_path):
+            hdf5_files.append(full_path)
+            print(f"Found HDF5 file: {full_path}")
+        else:
+            print(f"Warning: HDF5 file not found: {full_path}")
+    
+    if not hdf5_files:
+        print("Error: No valid HDF5 files found")
+        sys.exit(1)
+    
+    # Create LeRobot dataset
+    my_dataset = create_empty_lerobot_dataset(
+        dataset_path=f"{dataset_root}/lerobot",
+        dataset_name=dataset_name,
+    )
+    
+    # Process each HDF5 file
+    for hdf5_file in hdf5_files:
+        print(f"\nProcessing: {hdf5_file}")
+        stream_to_lerobot(hdf5_file, my_dataset, task=TASK_UR5)
+
+    # Write modality configuration
+    print("\nWriting modality configuration...")
+    write_modality_ur5(dataset_root=dataset_root)
+
+    # Push to hub (optional)
+    if args.push_to_hub:
+        print("\nPushing to hub...")
+        my_dataset.push_to_hub(
+            commit_message=args.commit_message,
+            run_compute_stats=args.compute_stats
+        )
+        print("Successfully pushed to hub!")
+    else:
+        print("\nSkipping hub upload (use --push-to-hub to enable)")
+    
+    print("Conversion completed successfully!")
 
 
-hdf5_files = [f"{dataset_root}/all_obs.hdf5", f"{dataset_root}/all_obs_failed.hdf5"]
-my_dataset = create_empty_lerobot_dataset(
-    dataset_path=f"{dataset_root}/lerobot",
-    dataset_name="luebbet/eval_43k_long_headless",
-)
-for hdf5_file in hdf5_files:
-    stream_to_lerobot(hdf5_file, my_dataset, task=TASK_UR5)  
-
-write_modality_ur5(dataset_root=dataset_root)
-
-my_dataset.push_to_hub(
-    commit_message="Initial upload via script",
-    run_compute_stats=False       # already done in (C)
-)
+if __name__ == "__main__":
+    main()
