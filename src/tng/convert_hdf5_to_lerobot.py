@@ -17,6 +17,18 @@ JOINT_LIST_UR5 = [
 ]
 DELTA_JOINT_LIST_UR5 = [f"delta_{joint}" for joint in JOINT_LIST_UR5]
 
+TCP_POSE_LIST = [
+    "pos_x",
+    "pos_y",
+    "pos_z",
+    "quat_w",
+    "quat_x",
+    "quat_y",
+    "quat_z",
+]
+
+DELTA_TCP_POSE_LIST = [f"delta_{pose}" for pose in TCP_POSE_LIST]
+
 VIEWS_UR5 = [
     "camera_wrist",
     "camera_global_front",
@@ -84,13 +96,13 @@ def create_empty_lerobot_dataset(
     features = {
             "observation.state": {
                 "dtype": "float32",
-                "shape": (14,),
-                "names": JOINT_LIST_UR5 + DELTA_JOINT_LIST_UR5,
+                "shape": (28,),
+                "names": JOINT_LIST_UR5 + DELTA_JOINT_LIST_UR5 + TCP_POSE_LIST + DELTA_TCP_POSE_LIST,
             },
             "action": {
                 "dtype": "float32",
-                "shape": (14,),
-                "names": JOINT_LIST_UR5 + DELTA_JOINT_LIST_UR5,
+                "shape": (28,),
+                "names": JOINT_LIST_UR5 + DELTA_JOINT_LIST_UR5 + TCP_POSE_LIST + DELTA_TCP_POSE_LIST,
             },
         }
      
@@ -131,6 +143,14 @@ def write_modality_ur5(dataset_root: str):
             "delta_gripper": {
                 "start": 13,
                 "end": 14,
+            },
+            "tcp_pose": {
+                "start": 14,
+                "end": 21,
+            },
+            "delta_tcp_pose": {
+                "start": 21,
+                "end": 28,
             }
         },
 
@@ -151,6 +171,14 @@ def write_modality_ur5(dataset_root: str):
                 "start": 13,
                 "end": 14,
             },
+            "tcp_pose": {
+                "start": 14,
+                "end": 21,
+            },
+            "delta_tcp_pose": {
+                "start": 21,
+                "end": 28,
+            }
         },
 
         "video": {},
@@ -183,22 +211,51 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset,
         for demo_name in demo_names:
             demo_group = f['data'][demo_name]
             try:
-                joint_states = np.array(demo_group['obs_pre']['joints_pos_state'])
-                absolute_actions = np.array(demo_group['obs_post']['joints_pos_action'])
+                absolute_arm_joint_states = np.array(demo_group['obs_pre']['arm_joints_pos_state'])
+                absolute_gripper_joint_states = np.array(demo_group['obs_pre']['gripper_joint_pos_state'])
+                absolute_tcp_pose_states = np.array(demo_group['obs_pre']['tcp_pose_state'])
+
+                absolute_arm_joint_actions = np.array(demo_group['obs_post']['arm_joints_pos_action'])
+                absolute_gripper_joint_actions = np.array(demo_group['obs_post']['gripper_joint_pos_action'])
+                absolute_tcp_pose_actions = np.array(demo_group['obs_post']['tcp_pose_action'])
+
                 images = {view: np.array(demo_group['obs_pre'][view], dtype=np.uint8) for view in VIEWS_UR5}
+
             except KeyError:
                 print(f'Demo {demo_name} is not valid, skip it')
                 return False
-            
-            assert absolute_actions.shape[0] == joint_states.shape[0] == images[list(images.keys())[0]].shape[0], \
+
+            assert absolute_arm_joint_actions.shape[0] == absolute_arm_joint_states.shape[0] == images[list(images.keys())[0]].shape[0], \
                 f"Shape mismatch in demo '{demo_name}': " \
-                f"actions {absolute_actions.shape[0]}, states {joint_states.shape[0]}, images {images[list(images.keys())[0]].shape[0]}"
+                f"actions {absolute_arm_joint_actions.shape[0]}, states {absolute_arm_joint_states.shape[0]}, images {images[list(images.keys())[0]].shape[0]}"
             
-            relative_actions = absolute_actions - joint_states
-            all_actions = np.concatenate((absolute_actions, relative_actions), axis=1)
-            previous_joint_delta = np.roll(relative_actions, shift=1, axis=0)
-            all_states = np.concatenate((joint_states, previous_joint_delta), axis=1)
-            total_state_frames = joint_states.shape[0]
+            delta_arm_joint_actions = absolute_arm_joint_actions - absolute_arm_joint_states
+            delta_gripper_joint_actions = absolute_gripper_joint_actions - absolute_gripper_joint_states
+            delta_tcp_pose_actions = absolute_tcp_pose_actions - absolute_tcp_pose_states
+
+            delta_arm_joint_states = np.roll(delta_arm_joint_actions, shift=1, axis=0)
+            delta_gripper_joint_states = np.roll(delta_gripper_joint_actions, shift=1, axis=0)
+            delta_tcp_pose_states = np.roll(delta_tcp_pose_actions, shift=1, axis=0)
+
+            all_actions = np.concatenate((
+                absolute_arm_joint_actions,
+                absolute_gripper_joint_actions,
+                delta_arm_joint_actions,
+                delta_gripper_joint_actions,
+                absolute_tcp_pose_actions,
+                delta_tcp_pose_actions,
+            ), axis=1)
+
+            all_states = np.concatenate((
+                absolute_arm_joint_states,
+                absolute_gripper_joint_states,
+                delta_arm_joint_states,
+                delta_gripper_joint_states,
+                absolute_tcp_pose_states,
+                delta_tcp_pose_states,
+            ), axis=1)
+
+            total_state_frames = absolute_arm_joint_states.shape[0]
             for i in range(start_index, total_state_frames):
                 frame = {}
                 for view in VIEWS_UR5:
@@ -209,13 +266,13 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset,
 
             my_dataset.save_episode()
 
-dataset_root = "/home/innovation-hacking/luebbet/dev/datasets/pick_and_place/inference/2025-08-14_1255/"
+dataset_root = "/home/innovation-hacking/luebbet/dev/datasets/pick_and_place/inference/2025-08-21_1644/"
 
 
-hdf5_files = [f"{dataset_root}/all_obs.hdf5"]#, f"{dataset_root}/all_obs_failed.hdf5"]
+hdf5_files = [f"{dataset_root}/all_obs.hdf5", f"{dataset_root}/all_obs_failed.hdf5"]
 my_dataset = create_empty_lerobot_dataset(
     dataset_path=f"{dataset_root}/lerobot",
-    dataset_name="luebbet/success_delta",
+    dataset_name="luebbet/eval_43k_long_headless",
 )
 for hdf5_file in hdf5_files:
     stream_to_lerobot(hdf5_file, my_dataset, task=TASK_UR5)  
