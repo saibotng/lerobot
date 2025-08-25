@@ -38,8 +38,6 @@ VIEWS_UR5 = [
     "camera_global_side",
 ]
 
-TASK_UR5 = "Pick up the blue cube and place it on the black platform"
-
 FPS_UR5 = 20  # Frames per second for UR5 robot data
 
 def hdf5_to_dict(
@@ -201,10 +199,26 @@ def write_modality_ur5(dataset_root: str):
     with open(f"{dataset_root}/lerobot/meta/modality.json", "w") as f:
         json.dump(modality, f, indent=2)
 
+def decode_prompts_uint8(prompt_bytes, prompt_len):
+    """
+    Reconstructs a list of UTF-8 strings from the stored tensors.
+    
+    Args:
+        prompt_bytes: uint8 tensor [num_envs, max_len]
+        prompt_len:   int32/int64 tensor [num_envs]
+    
+    Returns:
+        List[str] of decoded prompts
+    """
+    prompts = []
+    for row, n in zip(prompt_bytes, prompt_len):
+        # Slice the valid part of the row and turn it into bytes
+        s = bytes(row[: int(n)].tolist()).decode("utf-8", errors="replace")
+        prompts.append(s)
+    return prompts
 
-def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset,
-                         task: str,
-                         start_index: int = 1):
+
+def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset, start_index: int = 1):
 
     print(f'Processing hdf5 file: {h5_path}')
     with h5py.File(h5_path, 'r') as f:
@@ -223,6 +237,11 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset,
                 absolute_tcp_pose_actions = np.array(demo_group['obs_post']['tcp_pose_action'])
 
                 images = {view: np.array(demo_group['obs_pre'][view], dtype=np.uint8) for view in VIEWS_UR5}
+
+                prompt_bytes = demo_group["obs_pre_reset"]['prompt_bytes']
+                prompt_len = demo_group["obs_pre_reset"]['prompt_len']
+
+                task = decode_prompts_uint8(prompt_bytes, prompt_len)[0]
 
             except KeyError:
                 print(f'Demo {demo_name} is not valid, skip it')
@@ -347,7 +366,7 @@ def main():
     # Process each HDF5 file
     for hdf5_file in hdf5_files:
         print(f"\nProcessing: {hdf5_file}")
-        stream_to_lerobot(hdf5_file, my_dataset, task=TASK_UR5)
+        stream_to_lerobot(hdf5_file, my_dataset)
 
     # Write modality configuration
     print("\nWriting modality configuration...")
