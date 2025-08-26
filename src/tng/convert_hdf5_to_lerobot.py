@@ -238,8 +238,8 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset, start_index: int
 
                 images = {view: np.array(demo_group['obs_pre'][view], dtype=np.uint8) for view in VIEWS_UR5}
 
-                prompt_bytes = demo_group["obs_pre_reset"]['prompt_bytes']
-                prompt_len = demo_group["obs_pre_reset"]['prompt_len']
+                prompt_bytes = demo_group["obs_post_reset"]['prompt_bytes']
+                prompt_len = demo_group["obs_post_reset"]['prompt_len']
 
                 task = decode_prompts_uint8(prompt_bytes, prompt_len)[0]
 
