@@ -121,7 +121,7 @@ def create_empty_lerobot_dataset(
         robot_type="ur5",
         fps=FPS_UR5,
         features=features,
-        image_writer_threads=8,
+        image_writer_threads=4,
         image_writer_processes=0,
         video_backend="decord",
     )
@@ -199,6 +199,58 @@ def write_modality_ur5(dataset_root: str):
     with open(f"{dataset_root}/lerobot/meta/modality.json", "w") as f:
         json.dump(modality, f, indent=2)
 
+def validate_image_data(images_dict, demo_name):
+    """Validate image data before processing"""
+    for view, img_array in images_dict.items():
+        # Check basic properties
+        if img_array.dtype != np.uint8:
+            raise ValueError(f"Invalid dtype for {view} in {demo_name}: {img_array.dtype}")
+        
+        if len(img_array.shape) != 4:  # [time, height, width, channels]
+            raise ValueError(f"Invalid shape for {view} in {demo_name}: {img_array.shape}")
+        
+        if img_array.shape[1:] != (512, 512, 3):
+            raise ValueError(f"Invalid image dimensions for {view} in {demo_name}: {img_array.shape[1:]}")
+        
+        # Check for valid pixel values
+        if np.any(img_array < 0) or np.any(img_array > 255):
+            raise ValueError(f"Invalid pixel values in {view} for {demo_name}")
+        
+        # Check for completely black or corrupted frames
+        for i, frame in enumerate(img_array):
+            if np.all(frame == 0):
+                print(f"Warning: Completely black frame {i} in {view} for {demo_name}")
+            elif np.std(frame) < 1.0:  # Very low variance indicates potential corruption
+                print(f"Warning: Low variance frame {i} in {view} for {demo_name}")
+
+def validate_episode_completeness(demo_group, demo_name):
+    """Validate that episode has complete data"""
+    try:
+        # Get all array lengths
+        arm_states_len = len(demo_group['obs_pre']['arm_joints_pos_state'])
+        arm_actions_len = len(demo_group['obs_post']['arm_joints_pos_action'])
+        
+        # Check all views have same number of frames
+        image_lengths = {}
+        for view in VIEWS_UR5:
+            if view not in demo_group['obs_pre']:
+                raise ValueError(f"Missing view {view} in demo {demo_name}")
+            image_lengths[view] = len(demo_group['obs_pre'][view])
+        
+        # All lengths should match
+        all_lengths = [arm_states_len, arm_actions_len] + list(image_lengths.values())
+        if len(set(all_lengths)) > 1:
+            raise ValueError(f"Inconsistent episode length in {demo_name}: {dict(zip(['states', 'actions'] + list(image_lengths.keys()), all_lengths))}")
+        
+        # Check minimum episode length
+        if arm_states_len < 10:  # Arbitrary minimum
+            raise ValueError(f"Episode too short in {demo_name}: {arm_states_len} frames")
+            
+        return arm_states_len
+        
+    except Exception as e:
+        raise ValueError(f"Episode validation failed for {demo_name}: {e}")
+
 def decode_prompts_uint8(prompt_bytes, prompt_len):
     """
     Reconstructs a list of UTF-8 strings from the stored tensors.
@@ -228,6 +280,7 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset, start_index: int
         for demo_name in demo_names:
             demo_group = f['data'][demo_name]
             try:
+                episode_length = validate_episode_completeness(demo_group, demo_name)
                 absolute_arm_joint_states = np.array(demo_group['obs_pre']['arm_joints_pos_state'])
                 absolute_gripper_joint_states = np.array(demo_group['obs_pre']['gripper_joint_pos_state'])
                 absolute_tcp_pose_states = np.array(demo_group['obs_pre']['tcp_pose_state'])
@@ -236,7 +289,13 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset, start_index: int
                 absolute_gripper_joint_actions = np.array(demo_group['obs_post']['gripper_joint_pos_action'])
                 absolute_tcp_pose_actions = np.array(demo_group['obs_post']['tcp_pose_action'])
 
-                images = {view: np.array(demo_group['obs_pre'][view], dtype=np.uint8) for view in VIEWS_UR5}
+                images = {}
+                for view in VIEWS_UR5:
+                    img_data = np.array(demo_group['obs_pre'][view], dtype=np.uint8)
+                    images[view] =  np.ascontiguousarray(img_data)
+
+                validate_image_data(images, demo_name)
+
 
                 prompt_bytes = demo_group["obs_post_reset"]['prompt_bytes']
                 prompt_len = demo_group["obs_post_reset"]['prompt_len']
@@ -281,7 +340,17 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset, start_index: int
             for i in range(start_index, total_state_frames):
                 frame = {}
                 for view in VIEWS_UR5:
-                    frame[f"observation.images.{view}_view"] = images[view][i]
+                    img = images[view][i]
+                    if img.shape != (512, 512, 3):
+                        print(f"WARNING: Invalid image shape at frame {i} in {demo_name}, skipping frame")
+                        raise(AssertionError)
+                        continue
+                    frame[f"observation.images.{view}_view"] = img
+                
+                # Skip frame if not all views are valid
+                if len(frame) != len(VIEWS_UR5):
+                    continue
+                    
                 frame["observation.state"] = all_states[i]
                 frame["action"] = all_actions[i]
                 my_dataset.add_frame(frame=frame, task=task)
