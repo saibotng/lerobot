@@ -121,9 +121,8 @@ def create_empty_lerobot_dataset(
         robot_type="ur5",
         fps=FPS_UR5,
         features=features,
-        image_writer_threads=4,
+        image_writer_threads=8,
         image_writer_processes=0,
-        video_backend="decord",
     )
 
 def write_modality_ur5(dataset_root: str):
@@ -292,7 +291,7 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset, start_index: int
                 images = {}
                 for view in VIEWS_UR5:
                     img_data = np.array(demo_group['obs_pre'][view], dtype=np.uint8)
-                    images[view] =  np.ascontiguousarray(img_data)
+                    images[view] = np.ascontiguousarray(img_data)
 
                 validate_image_data(images, demo_name)
 
@@ -306,9 +305,10 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset, start_index: int
                 print(f'Demo {demo_name} is not valid, skip it')
                 return False
 
-            assert absolute_arm_joint_actions.shape[0] == absolute_arm_joint_states.shape[0] == images[list(images.keys())[0]].shape[0], \
-                f"Shape mismatch in demo '{demo_name}': " \
-                f"actions {absolute_arm_joint_actions.shape[0]}, states {absolute_arm_joint_states.shape[0]}, images {images[list(images.keys())[0]].shape[0]}"
+            n = absolute_arm_joint_states.shape[0]
+            assert n == episode_length, f"Action T mismatch {n} vs {episode_length}"
+            for v in VIEWS_UR5:
+                assert images[v].shape[0] == n, f"{v}: T mismatch {images[v].shape[0]} vs {n}"
             
             delta_arm_joint_actions = absolute_arm_joint_actions - absolute_arm_joint_states
             delta_gripper_joint_actions = absolute_gripper_joint_actions - absolute_gripper_joint_states
@@ -336,26 +336,31 @@ def stream_to_lerobot(h5_path: str, my_dataset: LeRobotDataset, start_index: int
                 delta_tcp_pose_states,
             ), axis=1)
 
-            total_state_frames = absolute_arm_joint_states.shape[0]
-            for i in range(start_index, total_state_frames):
+            wrote_any = False    
+            for i in range(start_index, episode_length):
                 frame = {}
+                bad = False
                 for view in VIEWS_UR5:
                     img = images[view][i]
                     if img.shape != (512, 512, 3):
                         print(f"WARNING: Invalid image shape at frame {i} in {demo_name}, skipping frame")
-                        raise(AssertionError)
-                        continue
+                        bad = True
+                        break
                     frame[f"observation.images.{view}_view"] = img
                 
                 # Skip frame if not all views are valid
-                if len(frame) != len(VIEWS_UR5):
+                if bad:
                     continue
-                    
+
                 frame["observation.state"] = all_states[i]
                 frame["action"] = all_actions[i]
                 my_dataset.add_frame(frame=frame, task=task)
+                wrote_any = True
 
-            my_dataset.save_episode()
+            if wrote_any:
+                my_dataset.save_episode()
+            else:
+                print(f"Skipped episode {demo_name}: no valid frames")
 
 
 def main():
