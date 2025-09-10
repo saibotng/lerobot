@@ -34,8 +34,8 @@ DELTA_TCP_POSE_LIST = [f"delta_{pose}" for pose in TCP_POSE_LIST]
 
 VIEWS_UR5 = [
     "camera_wrist",
-    "camera_global_front",
-    "camera_global_side",
+    "camera_global_main",
+    "camera_global_secondary",
 ]
 
 FPS_UR5 = 20  # Frames per second for UR5 robot data
@@ -125,7 +125,7 @@ def create_empty_lerobot_dataset(
         image_writer_processes=0,
     )
 
-def write_modality_ur5(dataset_root: str):
+def write_modality_ur5(dataset_dir: str):
     modality = {
         "state": {
             "robot_arm": {
@@ -195,7 +195,7 @@ def write_modality_ur5(dataset_root: str):
             "original_key": f"observation.images.{view}_view"
         }
 
-    with open(f"{dataset_root}/lerobot/meta/modality.json", "w") as f:
+    with open(f"{dataset_dir}/meta/modality.json", "w") as f:
         json.dump(modality, f, indent=2)
 
 def validate_image_data(images_dict, demo_name):
@@ -433,7 +433,7 @@ def main():
     
     # Create LeRobot dataset
     my_dataset = create_empty_lerobot_dataset(
-        dataset_path=f"{dataset_root}/lerobot",
+        dataset_path=f"{dataset_root}/lerobot_{dataset_name.replace('/', '_')}",
         dataset_name=dataset_name,
     )
     
@@ -444,7 +444,7 @@ def main():
 
     # Write modality configuration
     print("\nWriting modality configuration...")
-    write_modality_ur5(dataset_root=dataset_root)
+    write_modality_ur5(f"{dataset_root}/lerobot_{dataset_name.replace('/', '_')}")
 
     # Push to hub (optional)
     if args.push_to_hub:
