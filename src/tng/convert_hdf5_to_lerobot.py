@@ -451,7 +451,8 @@ def main():
         print("\nPushing to hub...")
         my_dataset.push_to_hub(
             commit_message=args.commit_message,
-            run_compute_stats=args.compute_stats
+            run_compute_stats=args.compute_stats,
+            private=True
         )
         print("Successfully pushed to hub!")
     else:
